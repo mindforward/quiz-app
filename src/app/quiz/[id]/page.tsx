@@ -8,6 +8,7 @@ import MathText from '@/components/Math'
 type UserAnswer = {
   questionId: string
   selectedOptionId: string | null
+  selectedOptionIds?: string[] | null
   isCorrect: boolean
 }
 
@@ -20,6 +21,7 @@ export default function QuizPage() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [answers, setAnswers] = useState<UserAnswer[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [showResult, setShowResult] = useState(false)
   const [showReview, setShowReview] = useState(false)
   const [numInput, setNumInput] = useState(10)
@@ -62,6 +64,9 @@ export default function QuizPage() {
     return a
   }
 
+  // A question is multi-select when it has more than one correct option
+  const isMulti = (q: QuestionWithOptions) => q.answer_options.filter(o => o.is_correct).length > 1
+
   const startQuiz = () => {
     const count = Math.min(numInput, allQuestions.length)
     const picked = shuffle(allQuestions).slice(0, count).map(q => ({
@@ -74,6 +79,7 @@ export default function QuizPage() {
     setShowResult(false)
     setShowReview(false)
     setSelectedId(null)
+    setSelectedIds([])
     setRevealed(false)
     setShowHint(false)
     setStarted(true)
@@ -93,10 +99,36 @@ export default function QuizPage() {
     }])
   }
 
+  // Multi-select: toggle an option on/off
+  const toggleOption = (optionId: string) => {
+    if (revealed) return
+    setSelectedIds(prev =>
+      prev.includes(optionId) ? prev.filter(id => id !== optionId) : [...prev, optionId]
+    )
+  }
+
+  // Multi-select: confirm the chosen set of options
+  const confirmMultiAnswer = () => {
+    if (revealed || selectedIds.length === 0) return
+    const q = questions[currentIndex]
+    const correctIds = q.answer_options.filter(o => o.is_correct).map(o => o.id)
+    const isCorrect =
+      selectedIds.length === correctIds.length &&
+      selectedIds.every(id => correctIds.includes(id))
+    setRevealed(true)
+    setAnswers(prev => [...prev, {
+      questionId: q.id,
+      selectedOptionId: null,
+      selectedOptionIds: [...selectedIds],
+      isCorrect,
+    }])
+  }
+
   const nextQuestion = () => {
     if (currentIndex < questions.length - 1) {
       setCurrentIndex(i => i + 1)
       setSelectedId(null)
+      setSelectedIds([])
       setRevealed(false)
       setShowHint(false)
     } else {
@@ -109,9 +141,11 @@ export default function QuizPage() {
     setCurrentIndex(index)
     if (ans) {
       setSelectedId(ans.selectedOptionId)
+      setSelectedIds(ans.selectedOptionIds ?? (ans.selectedOptionId ? [ans.selectedOptionId] : []))
       setRevealed(true)
     } else {
       setSelectedId(null)
+      setSelectedIds([])
       setRevealed(false)
     }
     setShowHint(false)
@@ -249,7 +283,9 @@ export default function QuizPage() {
                   <p className="text-gray-800 text-lg mb-3"><MathText text={q.question_text} /></p>
                   <div className="space-y-2">
                     {q.answer_options.map(opt => {
-                      const isUserChoice = opt.id === userAns?.selectedOptionId
+                      const isUserChoice = userAns?.selectedOptionIds
+                        ? userAns.selectedOptionIds.includes(opt.id)
+                        : opt.id === userAns?.selectedOptionId
                       return (
                         <div key={opt.id} className={`rounded-xl px-4 py-3 text-sm ${
                           opt.is_correct ? 'bg-green-100 border border-green-300' :
@@ -371,6 +407,11 @@ export default function QuizPage() {
             })()}
           </div>
           <div className="flex shrink-0 gap-1.5">
+            {isMulti(q) && (
+              <span className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-100 text-emerald-700 border border-emerald-200">
+                ☑️ 多選
+              </span>
+            )}
             {q.hint && (
               <button
                 onClick={() => setShowHint(!showHint)}
@@ -400,7 +441,8 @@ export default function QuizPage() {
 
         <div className="space-y-3">
           {q.answer_options.map((opt) => {
-            const isSelected = selectedId === opt.id
+            const multi = isMulti(q)
+            const isSelected = multi ? selectedIds.includes(opt.id) : selectedId === opt.id
             let style = 'border-gray-200 hover:border-sky-300 hover:bg-sky-50 cursor-pointer'
 
             if (revealed) {
@@ -414,13 +456,20 @@ export default function QuizPage() {
             return (
               <button
                 key={opt.id}
-                onClick={() => handleAnswer(opt.id)}
+                onClick={() => multi ? toggleOption(opt.id) : handleAnswer(opt.id)}
                 disabled={revealed}
                 className={`w-full text-left border-2 rounded-xl px-5 py-4 transition-all ${style}`}
               >
                 <div className="flex items-start gap-3">
                   {revealed && opt.is_correct && <span className="text-green-600 shrink-0">✅</span>}
                   {revealed && isSelected && !opt.is_correct && <span className="text-red-600 shrink-0">❌</span>}
+                  {!revealed && multi && (
+                    <span className={`shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center text-sm ${
+                      isSelected ? 'border-sky-500 bg-sky-500 text-white' : 'border-gray-300 text-transparent'
+                    }`}>
+                      ✓
+                    </span>
+                  )}
                   <div>
                     <p className="text-gray-800 text-lg"><MathText text={opt.text} /></p>
                     {revealed && isSelected && !opt.is_correct && opt.rationale && (
@@ -435,6 +484,17 @@ export default function QuizPage() {
             )
           })}
         </div>
+
+        {/* Multi-select confirm button */}
+        {isMulti(q) && !revealed && (
+          <button
+            onClick={confirmMultiAnswer}
+            disabled={selectedIds.length === 0}
+            className="w-full mt-6 bg-sky-600 text-white py-4 rounded-xl text-lg font-semibold hover:bg-sky-700 transition-colors shadow-sm disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed disabled:shadow-none"
+          >
+            確認答案 {selectedIds.length > 0 ? `（已選 ${selectedIds.length} 項）` : ''}
+          </button>
+        )}
 
         {/* No need old Hint section — now shows before answer too */}
         {/* Next button */}
